@@ -24,6 +24,7 @@ A comprehensive monitoring and observability layer for RAG applications. Traces 
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+pip install -e .
 cp .env.example .env
 ```
 
