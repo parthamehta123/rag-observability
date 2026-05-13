@@ -3,7 +3,6 @@
 import json
 from pathlib import Path
 
-import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
@@ -28,8 +27,8 @@ if metrics is None:
 # KPI cards
 col1, col2, col3, col4 = st.columns(4)
 col1.metric("Total Requests", metrics["total_requests"])
-col2.metric("Error Rate", f"{metrics['error_rate']*100:.1f}%")
-col3.metric("Citation Coverage", f"{metrics['citation_coverage']*100:.1f}%")
+col2.metric("Error Rate", f"{metrics['error_rate'] * 100:.1f}%")
+col3.metric("Citation Coverage", f"{metrics['citation_coverage'] * 100:.1f}%")
 col4.metric("P95 Latency (ms)", metrics["total_latency_ms"]["p95"])
 
 st.divider()
