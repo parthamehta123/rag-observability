@@ -33,10 +33,14 @@ def run_regression(eval_results_path: str = "reports/eval_results.json"):
 
     citation_coverage = results.get("citation_coverage", 0)
     if citation_coverage < CITATION_COVERAGE_THRESHOLD:
-        print(f"FAIL: Citation coverage {citation_coverage:.4f} < {CITATION_COVERAGE_THRESHOLD}")
+        print(
+            f"FAIL: Citation coverage {citation_coverage:.4f} < {CITATION_COVERAGE_THRESHOLD}"
+        )
         passed = False
     else:
-        print(f"PASS: Citation coverage {citation_coverage:.4f} >= {CITATION_COVERAGE_THRESHOLD}")
+        print(
+            f"PASS: Citation coverage {citation_coverage:.4f} >= {CITATION_COVERAGE_THRESHOLD}"
+        )
 
     if not passed:
         print("\nRegression gate FAILED. Fix quality issues before merging.")

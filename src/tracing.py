@@ -3,7 +3,7 @@
 import os
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from dotenv import load_dotenv
 from langfuse import Langfuse
@@ -20,6 +20,7 @@ langfuse = Langfuse(
 @dataclass
 class PipelineMetrics:
     """Collects metrics for a single RAG request."""
+
     retrieval_latency_ms: float = 0
     rerank_latency_ms: float = 0
     llm_latency_ms: float = 0
@@ -62,15 +63,17 @@ def create_trace(query: str, user_id: str = "anonymous") -> tuple:
 def finalize_trace(trace, metrics: PipelineMetrics, answer: str):
     """Finalize trace with output and metrics."""
     metrics.total_latency_ms = round(
-        metrics.retrieval_latency_ms + metrics.rerank_latency_ms + metrics.llm_latency_ms, 2
+        metrics.retrieval_latency_ms
+        + metrics.rerank_latency_ms
+        + metrics.llm_latency_ms,
+        2,
     )
 
     cost_per_1k_input = 0.005  # GPT-4o pricing estimate
     cost_per_1k_output = 0.015
-    estimated_cost = (
-        (metrics.input_tokens / 1000) * cost_per_1k_input
-        + (metrics.output_tokens / 1000) * cost_per_1k_output
-    )
+    estimated_cost = (metrics.input_tokens / 1000) * cost_per_1k_input + (
+        metrics.output_tokens / 1000
+    ) * cost_per_1k_output
 
     trace.update(
         output={"answer": answer},

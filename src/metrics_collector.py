@@ -2,10 +2,9 @@
 
 import json
 import statistics
-from dataclasses import dataclass
 from pathlib import Path
 
-from prometheus_client import Counter, Histogram, Summary
+from prometheus_client import Counter, Histogram
 
 
 # Prometheus metrics
@@ -15,15 +14,18 @@ CITATION_HITS = Counter("rag_citation_hits_total", "Requests with proper citatio
 DECLINE_COUNT = Counter("rag_decline_total", "Requests where system declined to answer")
 
 RETRIEVAL_LATENCY = Histogram(
-    "rag_retrieval_latency_ms", "Retrieval latency in ms",
+    "rag_retrieval_latency_ms",
+    "Retrieval latency in ms",
     buckets=[10, 25, 50, 100, 250, 500, 1000, 2500],
 )
 LLM_LATENCY = Histogram(
-    "rag_llm_latency_ms", "LLM generation latency in ms",
+    "rag_llm_latency_ms",
+    "LLM generation latency in ms",
     buckets=[100, 250, 500, 1000, 2500, 5000, 10000],
 )
 TOTAL_LATENCY = Histogram(
-    "rag_total_latency_ms", "Total request latency in ms",
+    "rag_total_latency_ms",
+    "Total request latency in ms",
     buckets=[100, 250, 500, 1000, 2500, 5000, 10000, 30000],
 )
 
@@ -71,12 +73,20 @@ class MetricsStore:
             p50 = sorted_data[len(sorted_data) // 2]
             p95_idx = int(len(sorted_data) * 0.95)
             p95 = sorted_data[min(p95_idx, len(sorted_data) - 1)]
-            return {"p50": round(p50, 2), "p95": round(p95, 2), "mean": round(statistics.mean(data), 2)}
+            return {
+                "p50": round(p50, 2),
+                "p95": round(p95, 2),
+                "mean": round(statistics.mean(data), 2),
+            }
 
         return {
             "total_requests": self.total_count,
-            "error_rate": round(self.error_count / self.total_count, 4) if self.total_count else 0,
-            "citation_coverage": round(self.citation_count / self.total_count, 4) if self.total_count else 0,
+            "error_rate": round(self.error_count / self.total_count, 4)
+            if self.total_count
+            else 0,
+            "citation_coverage": round(self.citation_count / self.total_count, 4)
+            if self.total_count
+            else 0,
             "total_latency_ms": percentiles(self.latencies),
             "retrieval_latency_ms": percentiles(self.retrieval_latencies),
             "llm_latency_ms": percentiles(self.llm_latencies),
