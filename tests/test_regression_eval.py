@@ -2,7 +2,6 @@
 
 import json
 
-import pytest
 
 from src.regression_eval import CITATION_COVERAGE_THRESHOLD, FAITHFULNESS_THRESHOLD
 

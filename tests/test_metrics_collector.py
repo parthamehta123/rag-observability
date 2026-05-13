@@ -1,8 +1,6 @@
 """Tests for metrics collection and aggregation."""
 
 import json
-import os
-import tempfile
 from dataclasses import dataclass
 
 from src.metrics_collector import MetricsStore
