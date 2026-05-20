@@ -2,31 +2,38 @@
 
 This script bridges rag-observability with production-rag:
 1. Loads the production-rag retriever and query pipeline
-2. Wraps each step with tracing instrumentation
+2. Wraps each step with Langfuse tracing (per-span timing)
 3. Collects metrics (latency, citations, costs) per request
 4. Saves metrics summary for the Streamlit dashboard
 5. Saves eval results for the regression gate
 
 Usage:
     cd ~/rag-observability
-    PYTHONPATH=.:../production-rag python src/run_traced_queries.py
+    python src/run_traced_queries.py
 """
 
 import importlib.util
 import json
+import os
 import sys
-import time
 from pathlib import Path
 
 from dotenv import load_dotenv
 from src.metrics_collector import MetricsStore
-from src.tracing import PipelineMetrics
+from src.tracing import PipelineMetrics, finalize_pipeline, traced_pipeline, traced_span
 
 # Import production-rag modules without conflicting with local src namespace
 RAG_ROOT = Path(__file__).resolve().parent.parent.parent / "production-rag"
 
-# Load production-rag's .env for API keys
+# Load production-rag's .env for API keys, then local .env for Langfuse keys
 load_dotenv(RAG_ROOT / ".env")
+load_dotenv(override=True)  # local .env overrides for LANGFUSE_* keys
+
+# Check if Langfuse is configured
+LANGFUSE_ENABLED = (
+    bool(os.getenv("LANGFUSE_PUBLIC_KEY"))
+    and os.getenv("LANGFUSE_PUBLIC_KEY") != "your-langfuse-public-key"
+)
 
 
 def _import_from_rag(module_name: str, file_name: str):
@@ -70,57 +77,65 @@ QUERIES = [
 
 
 def run_traced_queries():
-    """Run all queries with instrumentation and collect metrics."""
+    """Run all queries with Langfuse tracing and local metrics collection."""
     print("Loading production-rag pipeline...")
-    persist_dir = str(
-        Path(__file__).resolve().parent.parent.parent
-        / "production-rag"
-        / "data"
-        / "chroma"
-    )
+    persist_dir = str(RAG_ROOT / "data" / "chroma")
     retriever = HybridRetriever(persist_dir=persist_dir)
-    prompts = load_prompts(
-        str(
-            Path(__file__).resolve().parent.parent.parent
-            / "production-rag"
-            / "configs"
-            / "prompts.yaml"
-        )
-    )
+    prompts = load_prompts(str(RAG_ROOT / "configs" / "prompts.yaml"))
 
     store = MetricsStore()
     results = []
+
+    if LANGFUSE_ENABLED:
+        print("Langfuse tracing: ENABLED")
+    else:
+        print("Langfuse tracing: DISABLED (no keys configured)")
+        print("  To enable: add LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY to .env")
 
     print(f"\nRunning {len(QUERIES)} traced queries...\n")
 
     for i, query in enumerate(QUERIES):
         metrics = PipelineMetrics()
 
-        # Trace retrieval
-        start = time.perf_counter()
-        chunks = retriever.retrieve(query)
-        metrics.retrieval_latency_ms = round((time.perf_counter() - start) * 1000, 2)
-        metrics.chunks_retrieved = len(chunks)
+        def _run_query():
+            """Execute a single traced query."""
+            # ── Retrieval span ──
+            with traced_span("retrieval", metrics, as_type="retriever"):
+                chunks = retriever.retrieve(query)
+                metrics.chunks_retrieved = len(chunks)
 
-        # Trace LLM generation
-        start = time.perf_counter()
-        result = generate_answer(query, retriever, prompts)
-        metrics.llm_latency_ms = round((time.perf_counter() - start) * 1000, 2)
+            # ── LLM generation span ──
+            with traced_span("llm", metrics, as_type="generation"):
+                result = generate_answer(query, retriever, prompts)
 
-        answer = result["answer"]
-        sources = result["sources"]
+            return result
 
-        # Check citation quality
-        metrics.has_citations = "[Source" in answer
-        metrics.declined_to_answer = "I cannot answer" in answer
-        metrics.total_latency_ms = round(
-            metrics.retrieval_latency_ms + metrics.llm_latency_ms, 2
-        )
+        # Wrap in pipeline trace if Langfuse enabled, otherwise run directly
+        if LANGFUSE_ENABLED:
+            with traced_pipeline(query, user_id="benchmark"):
+                result = _run_query()
+                answer = result["answer"]
+                sources = result["sources"]
 
-        # Estimate tokens (rough: 4 chars per token)
-        context_text = " ".join(s["content"] for s in sources)
-        metrics.input_tokens = len(context_text + query) // 4
-        metrics.output_tokens = len(answer) // 4
+                metrics.has_citations = "[Source" in answer
+                metrics.declined_to_answer = "I cannot answer" in answer
+
+                context_text = " ".join(s["content"] for s in sources)
+                metrics.input_tokens = len(context_text + query) // 4
+                metrics.output_tokens = len(answer) // 4
+
+                finalize_pipeline(metrics, answer)
+        else:
+            result = _run_query()
+            answer = result["answer"]
+            sources = result["sources"]
+
+            metrics.has_citations = "[Source" in answer
+            metrics.declined_to_answer = "I cannot answer" in answer
+
+            context_text = " ".join(s["content"] for s in sources)
+            metrics.input_tokens = len(context_text + query) // 4
+            metrics.output_tokens = len(answer) // 4
 
         store.record(metrics)
 
@@ -130,12 +145,17 @@ def run_traced_queries():
             else ("DECLINED" if metrics.declined_to_answer else "NO_CITATION")
         )
         print(
-            f"  [{i + 1:2d}/{len(QUERIES)}] {status:10s} | {metrics.total_latency_ms:7.0f}ms | {query[:60]}"
+            f"  [{i + 1:2d}/{len(QUERIES)}] {status:10s} "
+            f"| retrieval:{metrics.retrieval_latency_ms:5.0f}ms "
+            f"| llm:{metrics.llm_latency_ms:5.0f}ms "
+            f"| total:{metrics.total_latency_ms:6.0f}ms "
+            f"| {query[:50]}"
         )
 
         results.append(
             {
                 "query": query,
+                "answer_preview": answer[:200],
                 "answer_length": len(answer),
                 "has_citations": metrics.has_citations,
                 "declined": metrics.declined_to_answer,
@@ -143,6 +163,8 @@ def run_traced_queries():
                 "llm_ms": metrics.llm_latency_ms,
                 "total_ms": metrics.total_latency_ms,
                 "chunks_retrieved": metrics.chunks_retrieved,
+                "input_tokens": metrics.input_tokens,
+                "output_tokens": metrics.output_tokens,
             }
         )
 
@@ -159,9 +181,7 @@ def run_traced_queries():
     # Save eval results for regression gate
     summary = store.get_summary()
     eval_results = {
-        "faithfulness": summary[
-            "citation_coverage"
-        ],  # Using citation coverage as proxy
+        "faithfulness": summary["citation_coverage"],
         "citation_coverage": summary["citation_coverage"],
     }
     with open("reports/eval_results.json", "w") as f:
@@ -173,6 +193,10 @@ def run_traced_queries():
     print("OBSERVABILITY SUMMARY")
     print(f"{'=' * 60}")
     print(json.dumps(summary, indent=2))
+
+    if LANGFUSE_ENABLED:
+        host = os.getenv("LANGFUSE_HOST", "http://localhost:3000")
+        print(f"\nView traces in Langfuse: {host}")
 
     return summary
 
